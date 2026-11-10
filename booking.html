@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wednesday Court Booking</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #0f172a;
+            --border: #e2e8f0;
+            --booked-bg: #f1f5f9;
+            --booked-text: #94a3b8;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 2rem 1rem;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 650px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #64748b;
+            margin-bottom: 2rem;
+        }
+
+        .day-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .day-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--primary);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .court-section {
+            margin-top: 1rem;
+        }
+
+        .court-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        button.slot-btn {
+            padding: 0.75rem;
+            border: 1px solid var(--primary);
+            background-color: transparent;
+            color: var(--primary);
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        button.slot-btn:hover:not(:disabled) {
+            background-color: var(--primary);
+            color: white;
+        }
+
+        button.slot-btn:disabled {
+            background-color: var(--booked-bg);
+            border-color: var(--border);
+            color: var(--booked-text);
+            cursor: not-allowed;
+            text-decoration: line-through;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Court Bookings</h1>
+    <p class="subtitle">Bookings open each Tuesday for the upcoming 3 Wednesdays.</p>
+
+    <div id="schedule-container"></div>
+</div>
+
+<script>
+    // Local memory state for bookings
+    const bookings = new Set();
+
+    function getAvailableWednesdays() {
+        const today = new Date();
+        const currentDayOfWeek = today.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed...
+        
+        // Calculate days to the upcoming Wednesday
+        // (If today is Wednesday, offset is 0; if Tuesday, offset is 1, etc.)
+        let daysToNextWednesday = (3 - currentDayOfWeek + 7) % 7;
+        
+        const nextWednesday = new Date(today);
+        nextWednesday.setDate(today.getDate() + daysToNextWednesday);
+        
+        const availableDates = [];
+        
+        // Show next Wednesday, + 7 days, and + 14 days (spanning the 15-day window)
+        for (let i = 0; i < 3; i++) {
+            const wednesday = new Date(nextWednesday);
+            wednesday.setDate(nextWednesday.getDate() + (i * 7));
+            availableDates.push(wednesday);
+        }
+        
+        return availableDates;
+    }
+
+    function formatDate(date) {
+        return date.toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+    }
+
+    function formatSlotKey(dateStr, court, time) {
+        return `${dateStr}-Court${court}-${time}`;
+    }
+
+    function bookSlot(dateStr, court, time, button) {
+        const key = formatSlotKey(dateStr, court, time);
+        bookings.add(key);
+        
+        button.disabled = true;
+        button.innerText = `${time} (Booked)`;
+        alert(`Successfully booked Court ${court} on ${dateStr} for ${time}!`);
+    }
+
+    function renderSchedule() {
+        const dates = getAvailableWednesdays();
+        const container = document.getElementById('schedule-container');
+        container.innerHTML = '';
+
+        const courts = [2, 3];
+        const times = ['9:00 AM', '10:00 AM'];
+
+        dates.forEach(date => {
+            const dateStr = date.toISOString().split('T')[0];
+            const readableDate = formatDate(date);
+
+            const dayCard = document.createElement('div');
+            dayCard.className = 'day-card';
+
+            let html = `<div class="day-title">${readableDate}</div>`;
+
+            courts.forEach(court => {
+                html += `
+                    <div class="court-section">
+                        <div class="court-title">Court ${court}</div>
+                        <div class="slots-grid">
+                `;
+
+                times.forEach(time => {
+                    const key = formatSlotKey(dateStr, court, time);
+                    const isBooked = bookings.has(key);
+                    const btnText = isBooked ? `${time} (Booked)` : `${time}`;
+                    const disabledAttr = isBooked ? 'disabled' : '';
+
+                    html += `
+                        <button class="slot-btn" ${disabledAttr} 
+                                onclick="bookSlot('${dateStr}', ${court}, '${time}', this)">
+                            ${btnText}
+                        </button>
+                    `;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            dayCard.innerHTML = html;
+            container.appendChild(dayCard);
+        });
+    }
+
+    // Initial render
+    renderSchedule();
+</script>
+
+</body>
+</html>
