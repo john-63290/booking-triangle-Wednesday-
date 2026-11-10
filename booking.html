@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wednesday Court Booking</title>
+    <!-- Tailwind CSS for sleek responsive styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            DEFAULT: '#2563eb',
+                            hover: '#1d4ed8',
+                            light: '#eff6ff'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        .booked-slot {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #94a3b8 !important;
+        }
+        .my-booking {
+            background-color: #dbeafe !important;
+            border-color: #2563eb !important;
+            color: #1e40af !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4 flex justify-center items-start">
+
+<div class="max-w-2xl w-full">
+    <!-- Header -->
+    <header class="bg-white border border-slate-200 rounded-xl p-6 mb-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Court Bookings</h1>
+            <p class="text-sm text-slate-500 mt-0.5">Bookings open each Tuesday for the upcoming 3 Wednesdays.</p>
+        </div>
+        <div class="text-xs text-slate-500 bg-slate-100 px-3 py-2 rounded-lg border border-slate-200 font-medium">
+            Click any slot to reserve or cancel
+        </div>
+    </header>
+
+    <!-- Active Reservations Summary Section -->
+    <div id="my-bookings-card" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-5 mb-6 shadow-sm">
+        <h2 class="text-md font-semibold text-blue-900 flex items-center justify-between">
+            <span>My Reservations</span>
+            <span id="my-booking-count" class="bg-blue-200 text-blue-800 text-xs px-2.5 py-1 rounded-full font-bold">0</span>
+        </h2>
+        <div id="my-bookings-list" class="mt-3 grid gap-2 text-sm text-blue-950">
+            <!-- Dynamic Bookings -->
+        </div>
+    </div>
+
+    <!-- Schedule Container -->
+    <main id="schedule-container" class="space-y-6">
+        <!-- Loaded dynamically -->
+        <div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-slate-400">
+            Loading available court schedules...
+        </div>
+    </main>
+</div>
+
+<!-- Modal Dialog (Booking & Confirmations) -->
+<div id="modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 transform transition-all">
+        <div class="flex justify-between items-center mb-4">
+            <h3 id="modal-title" class="text-lg font-bold text-slate-900">Reserve Court</h3>
+            <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 font-semibold text-lg">&times;</button>
+        </div>
+
+        <div id="modal-body">
+            <!-- Dynamic Modal Content -->
+        </div>
+    </div>
+</div>
+
+<!-- Firebase SDK Modules -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { 
+        getFirestore, 
+        collection, 
+        doc, 
+        setDoc, 
+        deleteDoc, 
+        onSnapshot 
+    } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // Application Configuration
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'wednesday-court-booking';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+
+    let db = null;
+    if (firebaseConfig && firebaseConfig.apiKey !== "demo-api-key") {
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+        } catch (e) {
+            console.warn("Firestore initialization skipped, falling back to localStorage", e);
+        }
+    }
+
+    // Global State Variables
+    let allBookingsMap = new Map(); // key -> booking document payload
+    let localBookings = JSON.parse(localStorage.getItem('court_noauth_bookings') || '{}');
+
+    // Sync localStorage into memory map
+    function syncLocalStorageToMap() {
+        Object.keys(localBookings).forEach(k => {
+            allBookingsMap.set(k, localBookings[k]);
+        });
+    }
+
+    // Load initial storage & Firestore if available
+    syncLocalStorageToMap();
+
+    if (db) {
+        const bookingsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'court_bookings');
+        onSnapshot(bookingsCollectionRef, (snapshot) => {
+            allBookingsMap.clear();
+            snapshot.forEach(docSnap => {
+                allBookingsMap.set(docSnap.id, docSnap.data());
+            });
+            renderSchedule();
+            renderMyBookingsCard();
+        }, (error) => {
+            console.warn("Firestore sync unavailable, using local persistence:", error);
+            syncLocalStorageToMap();
+            renderSchedule();
+            renderMyBookingsCard();
+        });
+    }
+
+    // Date Calculation Helpers
+    function getAvailableWednesdays() {
+        const today = new Date();
+        const currentDayOfWeek = today.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed...
+        
+        let daysToNextWednesday = (3 - currentDayOfWeek + 7) % 7;
+        
+        const nextWednesday = new Date(today);
+        nextWednesday.setDate(today.getDate() + daysToNextWednesday);
+        
+        const availableDates = [];
+        for (let i = 0; i < 3; i++) {
+            const wednesday = new Date(nextWednesday);
+            wednesday.setDate(nextWednesday.getDate() + (i * 7));
+            availableDates.push(wednesday);
+        }
+        
+        return availableDates;
+    }
+
+    function formatDate(date) {
+        return date.toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+    }
+
+    function formatSlotKey(dateStr, court, time) {
+        return `${dateStr}-Court${court}-${time.replace(/\s+/g, '')}`;
+    }
+
+    // --- UI Render Methods ---
+
+    // 1. Render Active User Bookings Card
+    function renderMyBookingsCard() {
+        const card = document.getElementById('my-bookings-card');
+        const list = document.getElementById('my-bookings-list');
+        const countSpan = document.getElementById('my-booking-count');
+
+        const activeBookings = Array.from(allBookingsMap.entries()).map(([key, data]) => ({ key, ...data }));
+        countSpan.textContent = activeBookings.length;
+
+        if (activeBookings.length === 0) {
+            card.classList.add('hidden');
+        } else {
+            list.innerHTML = activeBookings.map(b => `
+                <div class="flex items-center justify-between bg-white border border-blue-200 rounded-lg p-2.5 shadow-2xs">
+                    <div>
+                        <span class="font-bold text-slate-800">${escapeHtml(b.readableDate)}</span> — 
+                        <span class="font-semibold text-primary">Court ${b.court}</span> at 
+                        <span class="font-semibold text-slate-700">${b.time}</span>
+                        ${b.userName ? `<span class="text-xs text-slate-500 ml-1">(${escapeHtml(b.userName)})</span>` : ''}
+                    </div>
+                    <button onclick="window.cancelBooking('${b.key}')" class="text-xs text-red-600 hover:text-red-800 font-semibold px-2 py-1 bg-red-50 hover:bg-red-100 rounded border border-red-200 transition-colors">
+                        Cancel
+                    </button>
+                </div>
+            `).join('');
+            card.classList.remove('hidden');
+        }
+    }
+
+    // 2. Render Courts & Timeslots Grid
+    function renderSchedule() {
+        const dates = getAvailableWednesdays();
+        const container = document.getElementById('schedule-container');
+        container.innerHTML = '';
+
+        const courts = [2, 3];
+        const times = ['9:00 AM', '10:00 AM'];
+
+        dates.forEach(date => {
+            const dateStr = date.toISOString().split('T')[0];
+            const readableDate = formatDate(date);
+
+            const dayCard = document.createElement('div');
+            dayCard.className = 'bg-white border border-slate-200 rounded-xl p-6 shadow-xs';
+
+            let html = `
+                <div class="text-lg font-bold text-primary border-b border-slate-200 pb-2 mb-4 flex items-center justify-between">
+                    <span>${readableDate}</span>
+                </div>
+            `;
+
+            courts.forEach(court => {
+                html += `
+                    <div class="mt-4">
+                        <div class="text-sm font-bold text-slate-700 mb-2">Court ${court}</div>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                `;
+
+                times.forEach(time => {
+                    const key = formatSlotKey(dateStr, court, time);
+                    const bookingData = allBookingsMap.get(key);
+                    const isBooked = !!bookingData;
+
+                    let btnClass = "w-full py-3 px-3 rounded-md font-semibold text-sm border transition-all flex flex-col items-center justify-center min-h-[58px] ";
+                    let btnText = time;
+                    let subText = "";
+
+                    if (isBooked) {
+                        btnClass += "my-booking border-blue-600 shadow-xs cursor-pointer hover:bg-blue-200";
+                        btnText = `${time} (Booked)`;
+                        subText = bookingData.userName ? `Reserved by ${escapeHtml(bookingData.userName)}` : "Click to cancel";
+                    } else {
+                        btnClass += "border-primary text-primary hover:bg-primary hover:text-white cursor-pointer active:scale-95";
+                    }
+
+                    html += `
+                        <button class="${btnClass}" 
+                                onclick="window.handleSlotClick('${dateStr}', '${readableDate}', ${court}, '${time}', ${isBooked})">
+                            <span>${btnText}</span>
+                            ${subText ? `<span class="text-[11px] opacity-75 font-normal tracking-tight">${subText}</span>` : ''}
+                        </button>
+                    `;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            dayCard.innerHTML = html;
+            container.appendChild(dayCard);
+        });
+    }
+
+    // --- Slot Booking Dialog ---
+    window.handleSlotClick = (dateStr, readableDate, court, time, isBooked) => {
+        const key = formatSlotKey(dateStr, court, time);
+
+        if (isBooked) {
+            window.cancelBooking(key);
+            return;
+        }
+
+        // Prompt for booking details directly
+        showModal('Reserve Court', `
+            <form onsubmit="window.confirmBooking(event, '${dateStr}', '${readableDate}', ${court}, '${time}')" class="space-y-4">
+                <p class="text-sm text-slate-700">Reserving <strong>Court ${court}</strong> on <strong>${readableDate}</strong> at <strong>${time}</strong>.</p>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Your Name (Optional)</label>
+                    <input type="text" id="player-name" placeholder="e.g. John Doe" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                </div>
+                <button type="submit" class="w-full bg-primary hover:bg-primary-hover text-white font-semibold py-2.5 rounded-lg text-sm transition-colors">
+                    Confirm Reservation
+                </button>
+            </form>
+        `);
+    };
+
+    window.confirmBooking = async (e, dateStr, readableDate, court, time) => {
+        e.preventDefault();
+        const key = formatSlotKey(dateStr, court, time);
+        const nameInput = document.getElementById('player-name')?.value.trim();
+
+        const bookingPayload = {
+            dateStr,
+            readableDate,
+            court,
+            time,
+            userName: nameInput || 'Reserved',
+            createdAt: new Date().toISOString()
+        };
+
+        // Save to local storage
+        localBookings[key] = bookingPayload;
+        localStorage.setItem('court_noauth_bookings', JSON.stringify(localBookings));
+        allBookingsMap.set(key, bookingPayload);
+
+        // Firestore sync if configured
+        if (db) {
+            try {
+                const slotDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'court_bookings', key);
+                await setDoc(slotDocRef, bookingPayload);
+            } catch (err) {
+                console.warn("Firestore sync failed, retained in local storage:", err);
+            }
+        }
+
+        closeModal();
+        renderSchedule();
+        renderMyBookingsCard();
+    };
+
+    // --- Cancellation Logic ---
+    window.cancelBooking = (key) => {
+        const booking = allBookingsMap.get(key);
+        if (!booking) return;
+
+        showModal('Cancel Reservation', `
+            <div class="space-y-4 text-center">
+                <p class="text-slate-700">Cancel booking for <strong>Court ${booking.court}</strong> on <strong>${booking.readableDate}</strong> at <strong>${booking.time}</strong>?</p>
+                <div class="flex gap-3 justify-center">
+                    <button onclick="closeModal()" class="px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-slate-200 transition-colors">Keep Slot</button>
+                    <button onclick="window.confirmCancel('${key}')" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors">Yes, Cancel</button>
+                </div>
+            </div>
+        `);
+    };
+
+    window.confirmCancel = async (key) => {
+        delete localBookings[key];
+        localStorage.setItem('court_noauth_bookings', JSON.stringify(localBookings));
+        allBookingsMap.delete(key);
+
+        if (db) {
+            try {
+                const slotDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'court_bookings', key);
+                await deleteDoc(slotDocRef);
+            } catch (err) {
+                console.warn("Firestore deletion failed:", err);
+            }
+        }
+
+        closeModal();
+        renderSchedule();
+        renderMyBookingsCard();
+    };
+
+    // Modal Helpers
+    function showModal(title, bodyHtml) {
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-body').innerHTML = bodyHtml;
+        document.getElementById('modal').classList.remove('hidden');
+    }
+
+    window.closeModal = () => {
+        document.getElementById('modal').classList.add('hidden');
+    };
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>"']/g, (m) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        })[m]);
+    }
+
+    // Initial Render
+    renderSchedule();
+    renderMyBookingsCard();
+</script>
+
+</body>
+</html>
