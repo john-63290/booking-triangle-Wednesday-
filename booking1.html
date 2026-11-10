@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wednesday Court Booking</title>
+    <!-- Tailwind CSS for UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase App & Firestore Compatibility SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #0f172a;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4 flex justify-center">
+
+<div class="max-w-2xl w-full">
+    <header class="text-center mb-8">
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-2">Court Bookings</h1>
+        <p class="text-slate-500">Bookings open each Tuesday for the upcoming 3 Wednesdays.</p>
+        <div id="sync-status" class="mt-3 text-xs font-medium px-3 py-1 rounded-full inline-block">
+            ● Connecting to Firebase...
+        </div>
+    </header>
+
+    <div id="schedule-container" class="space-y-6"></div>
+</div>
+
+<!-- Booking & Management Modal -->
+<div id="booking-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative">
+        <h3 id="modal-title" class="text-xl font-bold text-slate-900 mb-2">Book Court Slot</h3>
+        <p id="modal-subtitle" class="text-sm text-slate-500 mb-4"></p>
+
+        <!-- New Booking Form -->
+        <div id="booking-form-content">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Player Name (Optional)</label>
+            <input type="text" id="player-name-input" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none mb-6" placeholder="e.g. Alex Smith">
+            <div class="flex justify-end gap-3">
+                <button onclick="closeModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
+                <button id="confirm-book-btn" class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Confirm Booking</button>
+            </div>
+        </div>
+
+        <!-- Cancel Booking Form -->
+        <div id="cancel-form-content" class="hidden">
+            <p class="text-sm text-slate-600 mb-6">Are you sure you want to cancel this booking?</p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Keep Booking</button>
+                <button id="confirm-cancel-btn" class="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Cancel Booking</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ------------------------------------------------------------------
+    // 1. FIREBASE CONFIGURATION
+    // ------------------------------------------------------------------
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    let db = null;
+    let bookingsMap = {};
+    let activeSlotKey = null;
+
+    // Initialize Firebase & Firestore
+    function initFirebase() {
+        const statusEl = document.getElementById('sync-status');
+
+        if (firebaseConfig.projectId !== "YOUR_PROJECT_ID") {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                
+                // Real-time listener for multi-user synchronization
+                db.collection('court_bookings').onSnapshot(snapshot => {
+                    bookingsMap = {};
+                    snapshot.forEach(doc => {
+                        bookingsMap[doc.id] = doc.data();
+                    });
+                    
+                    statusEl.innerText = '● Live Sync Active (Firestore)';
+                    statusEl.className = 'mt-3 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full inline-block';
+                    renderSchedule();
+                }, error => {
+                    console.error("Firestore sync error:", error);
+                    statusEl.innerText = '⚠️ Firestore Permission Denied (Check Database Rules)';
+                    statusEl.className = 'mt-3 text-xs font-medium text-red-700 bg-red-50 border border-red-200 px-3 py-1 rounded-full inline-block';
+                });
+            } catch (err) {
+                console.error("Firebase Initialization Error:", err);
+                fallbackToLocalStorage(statusEl);
+            }
+        } else {
+            fallbackToLocalStorage(statusEl);
+        }
+    }
+
+    function fallbackToLocalStorage(statusEl) {
+        statusEl.innerText = '⚠️ Local Device Storage (Add Firebase Config for Multi-User Sync)';
+        statusEl.className = 'mt-3 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full inline-block';
+        loadFromLocalStorage();
+    }
+
+    function loadFromLocalStorage() {
+        const saved = localStorage.getItem('wednesday_bookings');
+        if (saved) {
+            try { bookingsMap = JSON.parse(saved); } catch (e) {}
+        }
+        renderSchedule();
+    }
+
+    function saveToLocalStorage() {
+        localStorage.setItem('wednesday_bookings', JSON.stringify(bookingsMap));
+    }
+
+    // ------------------------------------------------------------------
+    // 2. BOOKING LOGIC & LOCAL DATE FORMATTING
+    // ------------------------------------------------------------------
+    function getLocalDateString(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    function getAvailableWednesdays() {
+        const today = new Date();
+        const currentDay = today.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed...
+        let daysToNextWednesday = (3 - currentDay + 7) % 7;
+        
+        const nextWednesday = new Date(today);
+        nextWednesday.setDate(today.getDate() + daysToNextWednesday);
+        
+        const dates = [];
+        for (let i = 0; i < 3; i++) {
+            const wed = new Date(nextWednesday);
+            wed.setDate(nextWednesday.getDate() + (i * 7));
+            dates.push(wed);
+        }
+        return dates;
+    }
+
+    function formatDate(date) {
+        return date.toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+    }
+
+    function formatSlotKey(dateStr, court, time) {
+        return `${dateStr}-Court${court}-${time.replace(/[: ]/g, '')}`;
+    }
+
+    function renderSchedule() {
+        const dates = getAvailableWednesdays();
+        const container = document.getElementById('schedule-container');
+        container.innerHTML = '';
+
+        const courts = [2, 3];
+        const times = ['9:00 AM', '10:00 AM'];
+
+        dates.forEach(date => {
+            const dateStr = getLocalDateString(date); // Uses local time zone safely
+            const readableDate = formatDate(date);
+
+            const dayCard = document.createElement('div');
+            dayCard.className = 'bg-white border border-slate-200 rounded-xl p-6 shadow-sm';
+
+            let html = `<div class="text-lg font-semibold text-blue-600 border-b border-slate-100 pb-3 mb-4">${readableDate}</div>`;
+
+            courts.forEach(court => {
+                html += `
+                    <div class="mt-4">
+                        <div class="text-sm font-medium text-slate-700 mb-2">Court ${court}</div>
+                        <div class="grid grid-cols-2 gap-3 mb-4">
+                `;
+
+                times.forEach(time => {
+                    const key = formatSlotKey(dateStr, court, time);
+                    const booking = bookingsMap[key];
+                    const isBooked = !!booking;
+                    
+                    const btnClass = isBooked 
+                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-pointer hover:border-red-300 hover:text-red-600'
+                        : 'border-blue-600 text-blue-600 hover:bg-blue-600 hover:text-white cursor-pointer';
+
+                    const labelText = isBooked 
+                        ? `${time} (Booked ${booking.playerName ? '- ' + booking.playerName : ''})` 
+                        : time;
+
+                    html += `
+                        <button class="w-full py-3 px-2 border text-sm font-semibold rounded-lg transition-all text-center ${btnClass}"
+                                onclick="handleSlotClick('${key}', '${readableDate}', ${court}, '${time}', ${isBooked})">
+                            ${labelText}
+                        </button>
+                    `;
+                });
+
+                html += `</div></div>`;
+            });
+
+            dayCard.innerHTML = html;
+            container.appendChild(dayCard);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 3. FIRESTORE CRUD OPERATIONS
+    // ------------------------------------------------------------------
+    function handleSlotClick(key, dateStr, court, time, isBooked) {
+        activeSlotKey = key;
+        const modal = document.getElementById('booking-modal');
+        const title = document.getElementById('modal-title');
+        const subtitle = document.getElementById('modal-subtitle');
+        const bookingContent = document.getElementById('booking-form-content');
+        const cancelContent = document.getElementById('cancel-form-content');
+
+        subtitle.innerText = `Court ${court} on ${dateStr} at ${time}`;
+
+        if (isBooked) {
+            title.innerText = 'Manage Booking';
+            bookingContent.classList.add('hidden');
+            cancelContent.classList.remove('hidden');
+            document.getElementById('confirm-cancel-btn').onclick = () => processCancel(key);
+        } else {
+            title.innerText = 'Book Slot';
+            bookingContent.classList.remove('hidden');
+            cancelContent.classList.add('hidden');
+            document.getElementById('player-name-input').value = '';
+            document.getElementById('confirm-book-btn').onclick = () => processBooking(key);
+        }
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    async function processBooking(key) {
+        const playerName = document.getElementById('player-name-input').value.trim();
+        const bookingData = {
+            bookedAt: new Date().toISOString(),
+            playerName: playerName || 'Anonymous'
+        };
+
+        if (db) {
+            try {
+                await db.collection('court_bookings').doc(key).set(bookingData);
+            } catch (err) {
+                alert("Could not save booking to Firestore. Please check database permissions.");
+            }
+        } else {
+            bookingsMap[key] = bookingData;
+            saveToLocalStorage();
+            renderSchedule();
+        }
+        closeModal();
+    }
+
+    async function processCancel(key) {
+        if (db) {
+            try {
+                await db.collection('court_bookings').doc(key).delete();
+            } catch (err) {
+                alert("Could not cancel booking in Firestore.");
+            }
+        } else {
+            delete bookingsMap[key];
+            saveToLocalStorage();
+            renderSchedule();
+        }
+        closeModal();
+    }
+
+    function closeModal() {
+        const modal = document.getElementById('booking-modal');
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+
+    // Initialize on page load
+    initFirebase();
+</script>
+</body>
+</html>
