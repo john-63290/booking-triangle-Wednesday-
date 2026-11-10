@@ -1,0 +1,9 @@
+    const firebaseConfig = {
+        apiKey: "AIzaSyCQhOj3jmDnCJjM-d4sqYyY_j4MqthseBY",
+        authDomain: "booking-2d2ed.firebaseapp.com",
+        projectId: "booking-2d2ed",
+        storageBucket: "booking-2d2ed.firebasestorage.app",
+        messagingSenderId: "9992068211",
+        appId: "1:9992068211:web:bac2fa679b3eeb2dc39e06",
+        measurementId: "G-07PFVB6GDC"
+    };
